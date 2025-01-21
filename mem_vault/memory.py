@@ -199,6 +199,8 @@ class VectorMemory:
                 embedding=embedding,
                 metadata=metadata or {}
             )
+        except ValueError:  # Let ValueError pass through
+            raise
         except Exception as e:
             logger.error(f"Failed to add memory: {str(e)}")
             raise StorageError(f"Failed to add memory: {str(e)}")
@@ -206,14 +208,6 @@ class VectorMemory:
     def _chunk_text(self, text: str, chunk_size: int = 2000, overlap: int = 200) -> List[str]:
         """
         Split text into overlapping chunks of approximately equal size.
-        
-        Args:
-            text: Text to split into chunks
-            chunk_size: Target size of each chunk in characters
-            overlap: Number of characters to overlap between chunks
-            
-        Returns:
-            List[str]: List of text chunks
         """
         if not text:
             return []
@@ -225,33 +219,40 @@ class VectorMemory:
         start = 0
         
         while start < len(text):
-            # Get chunk of target size or remaining text
             end = start + chunk_size
             
-            # If this isn't the last chunk, try to break at a sentence or paragraph
             if end < len(text):
-                # Look for paragraph break
-                next_break = text.find('\n\n', end - overlap)
-                if next_break != -1 and next_break < end + overlap:
-                    end = next_break
+                # Try to find a paragraph break within the overlap range
+                next_break = text.rfind('\n\n', end - overlap, end + overlap)
+                if next_break != -1:
+                    # Don't include the paragraph break at the end of the chunk
+                    end = text.rfind('.', start, next_break) + 1 if text.rfind('.', start, next_break) != -1 else next_break
                 else:
-                    # Look for sentence break
-                    next_period = text.find('.', end - overlap)
-                    if next_period != -1 and next_period < end + overlap:
+                    # Try to find a sentence break
+                    next_period = text.rfind('.', end - overlap, end + overlap)
+                    if next_period != -1:
                         end = next_period + 1
                     else:
-                        # Look for space to break on
+                        # Last resort: break at a space
                         next_space = text.rfind(' ', end - overlap, end + overlap)
                         if next_space != -1:
-                            end = next_space
+                            # Try to find a period before the space
+                            last_period = text.rfind('.', start, next_space)
+                            if last_period != -1 and last_period > start:
+                                end = last_period + 1
+                            else:
+                                end = next_space
             
             chunk = text[start:end].strip()
-            if chunk:  # Only add non-empty chunks
+            if chunk:
+                # Ensure chunk ends with a proper sentence if possible
+                if not chunk.endswith('.') and '.' in chunk:
+                    chunk = chunk[:chunk.rindex('.')+1]
                 chunks.append(chunk)
             
-            # Move start pointer, accounting for overlap
-            start = max(0, end - overlap)
-            
+            # Move start to the end of last complete sentence in previous chunk
+            start = end
+        
         return chunks
 
     def add_memories(self, 
